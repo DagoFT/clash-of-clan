@@ -1,4 +1,4 @@
-name: Deploy clash-of-clan to EC2
+name: Deploy Clash of Clans to EC2
 
 on:
   push:
@@ -6,7 +6,10 @@ on:
   workflow_dispatch:
 
 env:
-  TARGET_DIR: /var/www/html
+  FRONTEND_DIR: .
+  BACKEND_DIR: ./backend
+  TARGET_FRONTEND_DIR: /var/www/html
+  TARGET_BACKEND_DIR: /home/ec2-user/backend
   TMP_DIR: /tmp/repo-tmp
 
 jobs:
@@ -26,16 +29,30 @@ jobs:
           ssh-keyscan -p ${EC2_PORT:-22} ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Pack folder and send to EC2
+      - name: Deploy frontend to Apache
         run: |
-          tar -C . -czf - . | ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TMP_DIR} && tar -xzf - -C ${TMP_DIR}"
-      - name: Deploy on remote
-        run: |
-          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "TIMESTAMP=$(date +%Y%m%d%H%M%S) && \
-          if [ -d ${TARGET_DIR} ] && [ \"\$(ls -A ${TARGET_DIR} || true)\" != \"\" ]; then sudo mv ${TARGET_DIR} ${TARGET_DIR}-backup-\$TIMESTAMP; else sudo mkdir -p ${TARGET_DIR}; fi && \
-          sudo mkdir -p ${TARGET_DIR} && \
-          sudo cp -r ${TMP_DIR}/* ${TARGET_DIR}/ && \
-          sudo chown -R ec2-user:ec2-user ${TARGET_DIR} && \
-          sudo chmod -R 755 ${TARGET_DIR} && \
-          sudo systemctl restart httpd || sudo service httpd restart && \
+          tar -C ${FRONTEND_DIR} -czf - . | \
+          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TMP_DIR} && tar -xzf - -C ${TMP_DIR}"
+          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          if [ -d ${TARGET_FRONTEND_DIR} ] && [ \"\$(ls -A ${TARGET_FRONTEND_DIR} || true)\" != \"\" ]; then
+            sudo mv ${TARGET_FRONTEND_DIR} ${TARGET_FRONTEND_DIR}-backup-\$TIMESTAMP
+          else
+            sudo mkdir -p ${TARGET_FRONTEND_DIR}
+          fi
+          sudo cp -r ${TMP_DIR}/* ${TARGET_FRONTEND_DIR}/
+          sudo chown -R ec2-user:ec2-user ${TARGET_FRONTEND_DIR}
+          sudo chmod -R 755 ${TARGET_FRONTEND_DIR}
+          sudo systemctl restart httpd || sudo service httpd restart
           rm -rf ${TMP_DIR}"
+
+      - name: Deploy backend with PM2
+        run: |
+          tar -C ${BACKEND_DIR} -czf - . | \
+          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TARGET_BACKEND_DIR} && tar -xzf - -C ${TARGET_BACKEND_DIR}"
+          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+          cd ${TARGET_BACKEND_DIR}
+          npm install
+          pm2 start app.js --name clash-backend --update-env || pm2 restart clash-backend --update-env
+          pm2 save
+          "
