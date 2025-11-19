@@ -1,0 +1,62 @@
+name: Deploy clash-of-clan to EC2
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  TARGET_DIR: /var/www/html
+  TMP_DIR: /tmp/repo-tmp
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # add host key to avoid interactive prompt
+          ssh-keyscan -p ${EC2_PORT:-22} ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Pack folder and send to EC2
+        run: |
+          # comprueba que exista la carpeta
+          if [ ! -d "./clash-of-clan" ]; then
+            echo "ERROR: carpeta ./clash-of-clan no encontrada"
+            exit 1
+          fi
+          # Empaqueta y envía por ssh, extrae en /tmp/repo-tmp
+          tar -C ./clash-of-clan -czf - . | \
+            ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TMP_DIR} && tar -xzf - -C ${TMP_DIR}"
+
+      - name: Deploy on remote (move files, backup, set perms, restart)
+        run: |
+          ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} bash -eux <<'EOF'
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            # backup rápido del actual
+            if [ -d "${TARGET_DIR}" ] && [ "$(ls -A ${TARGET_DIR} || true)" != "" ]; then
+              sudo mv ${TARGET_DIR} ${TARGET_DIR}-backup-${TIMESTAMP}
+            else
+              sudo mkdir -p ${TARGET_DIR}
+            fi
+
+            # mover nuevo contenido
+            sudo mkdir -p ${TARGET_DIR}
+            sudo cp -r ${TMP_DIR}/* ${TARGET_DIR}/
+            sudo chown -R ec2-user:ec2-user ${TARGET_DIR}
+            sudo chmod -R 755 ${TARGET_DIR}
+
+            # reiniciar servicio web
+            sudo systemctl restart httpd || sudo service httpd restart
+
+            # limpiar tmp
+            rm -rf ${TMP_DIR}
