@@ -28,12 +28,7 @@ jobs:
 
       - name: Pack folder and send to EC2
         run: |
-          if [ ! -d "./clash-of-clan" ]; then
-            echo "ERROR: carpeta ./clash-of-clan no encontrada"
-            exit 1
-          fi
-          tar -C ./clash-of-clan -czf - . | ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TMP_DIR} && tar -xzf - -C ${TMP_DIR}"
-
+          tar -C . -czf - . | ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "mkdir -p ${TMP_DIR} && tar -xzf - -C ${TMP_DIR}"
       - name: Deploy on remote
         run: |
           ssh -p ${EC2_PORT:-22} ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "TIMESTAMP=$(date +%Y%m%d%H%M%S) && \
